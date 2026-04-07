@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>동료 평가 시스템</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; background: #f5f5f7; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const DIVISIONS = ["BX", "CX", "DX"];
+const GROUPS = [1, 2, 3, 4, 5, 6];
+const MAX_MEMBERS = 6;
+const LS_KEY = "peer-eval-api-url";
+
+async function gasCall(baseUrl, params) {
+  const url = new URL(baseUrl);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.append(k, typeof v === "object" ? JSON.stringify(v) : String(v)));
+  const res = await fetch(url.toString());
+  return res.json();
+}
+
+function App() {
+  const [mode, setMode] = useState("landing");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [config, setConfig] = useState(null);
+  const [apiUrl, setApiUrl] = useState("");
+  const [apiInput, setApiInput] = useState("");
+  const [testStatus, setTestStatus] = useState("");
+
+  const [questions, setQuestions] = useState(["", "", "", "", ""]);
+  const [adminPw, setAdminPw] = useState("");
+  const [pwInput, setPwInput] = useState("");
+
+  const [evalName, setEvalName] = useState("");
+  const [evalDiv, setEvalDiv] = useState("");
+  const [evalGroup, setEvalGroup] = useState("");
+  const [members, setMembers] = useState([""]);
+  const [scores, setScores] = useState({});
+  const [step, setStep] = useState(1);
+
+  const [results, setResults] = useState([]);
+  const [filterDiv, setFilterDiv] = useState("all");
+  const [filterGroup, setFilterGroup] = useState("all");
+  const [statsLoading, setStatsLoading] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem(LS_KEY);
+    if (saved) {
+      setApiUrl(saved);
+      setApiInput(saved);
+      gasCall(saved, { action: "getConfig" }).then(data => {
+        if (data && data.config) setConfig(data.config);
+      }).catch(() => {});
+    }
+    setLoading(false);
+  }, []);
+
+  const testConnection = async () => {
+    if (!apiInput.trim()) return setTestStatus("❌ URL을 입력해주세요.");
+    setTestStatus("⏳ 연결 테스트 중...");
+    try {
+      const data = await gasCall(apiInput.trim(), { action: "getConfig" });
+      if (data.error) { setTestStatus("❌ 오류: " + data.error); }
+      else { setTestStatus("✅ 연결 성공!"); if (data.config) { setConfig(data.config); setQuestions(data.config.questions || ["","","","",""]); } }
+    } catch { setTestStatus("❌ 연결 실패: URL을 확인해주세요."); }
+  };
+
+  const fetchResults = async () => {
+    if (!apiUrl) return;
+    setStatsLoading(true);
+    try { const data = await gasCall(apiUrl, { action: "getResults" }); setResults(data.results || []); }
+    catch { alert("결과를 불러오지 못했습니다."); }
+    setStatsLoading(false);
+  };
+
+  const handleAdminSave = async () => {
+    if (!apiInput.trim()) return alert("Google Sheets API URL을 입력해주세요.");
+    if (questions.some(q => !q.trim())) return alert("모든 질문을 입력해주세요.");
+    if (!adminPw.trim()) return alert("관리자 비밀번호를 설정해주세요.");
+    setSaving(true);
+    try {
+      localStorage.setItem(LS_KEY, apiInput.trim());
+      setApiUrl(apiInput.trim());
+      const data = await gasCall(apiInput.trim(), { action: "saveConfig", questions, password: adminPw.trim() });
+      if (data.success) { setConfig({ questions, password: adminPw.trim() }); alert("✅ 저장 완료!"); setMode("landing"); }
+      else alert("저장 실패: " + (data.error || "알 수 없는 오류"));
+    } catch (err) { alert("연결 실패: " + err.message); }
+    setSaving(false);
+  };
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    try {
+      const payload = { evaluator: evalName, division: evalDiv, group: parseInt(evalGroup), members: members.filter(m => m.trim()), scores };
+      const data = await gasCall(apiUrl, { action: "submitEval", data: payload });
+      if (data.success) setStep(4); else alert("제출 실패: " + (data.error || ""));
+    } catch (err) { alert("제출 실패: " + err.message); }
+    setSaving(false);
+  };
+
+  const handleClear = async () => {
+    if (!confirm("모든 평가 결과를 삭제하시겠습니까?")) return;
+    try { await gasCall(apiUrl, { action: "clearResults" }); setResults([]); alert("초기화 완료"); } catch (err) { alert("실패: " + err.message); }
+  };
+
+  const getFiltered = () => results.filter(r => {
+    if (filterDiv !== "all" && r.division !== filterDiv) return false;
+    if (filterGroup !== "all" && String(r.group) !== filterGroup) return false;
+    return true;
+  });
+
+  const getStats = () => {
+    const filtered = getFiltered();
+    if (!filtered.length || !config) return null;
+    const ms = {};
+    filtered.forEach(r => {
+      const k = `${r.division}-${r.group}-${r.member}`;
+      if (!ms[k]) ms[k] = { name: r.member, division: r.division, group: r.group, total: 0, count: 0, byQ: {}, evals: new Set() };
+      r.scores.forEach((val, qi) => {
+        const v = Number(val);
+        if (!isNaN(v) && val !== "" && val !== null) {
+          ms[k].total += v; ms[k].count++;
+          if (!ms[k].byQ[qi]) ms[k].byQ[qi] = { sum: 0, n: 0 };
+          ms[k].byQ[qi].sum += v; ms[k].byQ[qi].n++;
+        }
+      });
+      ms[k].evals.add(r.evaluator);
+    });
+    return ms;
+  };
+
+  if (loading) return React.createElement("div", { style: S.center },
+    React.createElement("div", { style: S.spinner }),
+    React.createElement("p", { style: { color: "#888", marginTop: 12 } }, "불러오는 중...")
+  );
+
+  // ─── LANDING ───
+  if (mode === "landing") {
+    return (
+      <div style={S.page}>
+        <div style={S.hero}>
+          <div style={S.logoCircle}>
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h1 style={S.heroTitle}>동료 평가 시스템</h1>
+          <p style={S.heroSub}>PEER EVALUATION</p>
+          {apiUrl ? <div style={S.connOk}>🟢 Google Sheets 연결됨</div> : <div style={S.connNo}>🔴 미연결</div>}
+        </div>
+        <div style={S.cardRow}>
+          {config && apiUrl ? (
+            <button style={S.mainBtn} onClick={() => { setStep(1); setEvalName(""); setEvalDiv(""); setEvalGroup(""); setMembers([""]); setScores({}); setMode("evaluate"); }}>
+              <span style={{fontSize:24}}>✏️</span>
+              <div><div style={S.btnLabel}>평가 시작하기</div><div style={S.btnDesc}>팀원에 대한 평가를 진행합니다</div></div>
+            </button>
+          ) : (
+            <div style={S.notice}>⚠️ 평가가 설정되지 않았습니다.<br/><span style={{fontSize:12,opacity:.7}}>관리자 설정에서 Google Sheets를 연결해주세요.</span></div>
+          )}
+          <button style={{...S.mainBtn, background:"#f8fafc"}} onClick={() => {
+            if (config && apiUrl) { setPwInput(""); setMode("adminLogin"); }
+            else { setQuestions(config?.questions||["","","","",""]); setAdminPw(""); setApiInput(apiUrl); setTestStatus(""); setMode("admin"); }
+          }}>
+            <span style={{fontSize:24}}>⚙️</span>
+            <div><div style={S.btnLabel}>관리자 설정</div><div style={S.btnDesc}>Google Sheets 연결 · 질문 설정 · 통계</div></div>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── ADMIN LOGIN ───
+  if (mode === "adminLogin") {
+    return (
+      <div style={S.page}><div style={S.card}>
+        <h2 style={S.cardTitle}>🔒 관리자 인증</h2>
+        <p style={S.cardSub}>비밀번호를 입력하세요.</p>
+        <input style={S.input} type="password" placeholder="비밀번호" value={pwInput} onChange={e => setPwInput(e.target.value)} onKeyDown={e => {
+          if (e.key === "Enter") { if (pwInput === config.password) { setMode("adminStats"); setPwInput(""); fetchResults(); } else alert("비밀번호가 틀렸습니다."); }
+        }}/>
+        <div style={S.row}>
+          <button style={S.secBtn} onClick={() => setMode("landing")}>취소</button>
+          <button style={S.priBtn} onClick={() => { if (pwInput === config.password) { setMode("adminStats"); setPwInput(""); fetchResults(); } else alert("비밀번호가 틀렸습니다."); }}>확인</button>
+        </div>
+      </div></div>
+    );
+  }
+
+  // ─── ADMIN SETUP ───
+  if (mode === "admin") {
+    return (
+      <div style={S.page}><div style={{...S.card, maxWidth: 480}}>
+        <h2 style={S.cardTitle}>관리자 설정</h2>
+        <div style={S.section}>
+          <div style={S.secHead}><span>📎</span><span style={S.secLabel}>Google Sheets 연결</span></div>
+          <p style={{fontSize:12,color:"#888",margin:"0 0 8px"}}>Apps Script 웹 앱 URL을 입력하세요.</p>
+          <input style={S.input} placeholder="https://script.google.com/macros/s/.../exec" value={apiInput} onChange={e => { setApiInput(e.target.value); setTestStatus(""); }}/>
+          <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+            <button style={{...S.secBtn,fontSize:12,padding:"6px 14px"}} onClick={testConnection}>🔌 연결 테스트</button>
+            {testStatus && <span style={{fontSize:12,color:testStatus.startsWith("✅")?"#16a34a":testStatus.startsWith("⏳")?"#888":"#dc2626"}}>{testStatus}</span>}
+          </div>
+        </div>
+        <div style={S.section}>
+          <div style={S.secHead}><span>📝</span><span style={S.secLabel}>평가 질문 (5개)</span></div>
+          {questions.map((q, i) => (
+            <div key={i} style={S.qRow}>
+              <span style={S.qBadge}>Q{i+1}</span>
+              <input style={{...S.input,flex:1,margin:0}} placeholder={`질문 ${i+1}`} value={q} onChange={e => { const nq=[...questions]; nq[i]=e.target.value; setQuestions(nq); }}/>
+            </div>
+          ))}
+        </div>
+        <div style={S.section}>
+          <div style={S.secHead}><span>🔐</span><span style={S.secLabel}>관리자 비밀번호</span></div>
+          <input style={S.input} type="password" placeholder="통계 조회 시 사용할 비밀번호" value={adminPw} onChange={e => setAdminPw(e.target.value)}/>
+        </div>
+        <div style={S.row}>
+          <button style={S.secBtn} onClick={() => setMode("landing")}>취소</button>
+          <button style={S.priBtn} onClick={handleAdminSave} disabled={saving}>{saving ? "저장 중..." : "저장하기"}</button>
+        </div>
+      </div></div>
+    );
+  }
+
+  // ─── ADMIN STATS ───
+  if (mode === "adminStats") {
+    const stats = getStats();
+    return (
+      <div style={S.page}><div style={{...S.card, maxWidth:760, width:"100%"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+          <h2 style={{...S.cardTitle,margin:0}}>📊 평가 결과</h2>
+          <button style={{...S.secBtn,fontSize:12}} onClick={() => setMode("landing")}>홈으로</button>
+        </div>
+        <p style={{fontSize:12,color:"#10b981",margin:"4px 0 12px"}}>📋 Google Sheets 실시간 조회</p>
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+          <select style={S.select} value={filterDiv} onChange={e => setFilterDiv(e.target.value)}>
+            <option value="all">전체 본부</option>
+            {DIVISIONS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select style={S.select} value={filterGroup} onChange={e => setFilterGroup(e.target.value)}>
+            <option value="all">전체 조</option>
+            {GROUPS.map(g => <option key={g} value={String(g)}>{g}조</option>)}
+          </select>
+          <button style={{...S.secBtn,fontSize:12,padding:"6px 12px"}} onClick={fetchResults}>{statsLoading?"⏳":"🔄"} 새로고침</button>
+          <span style={{fontSize:12,color:"#888"}}>총 {getFiltered().length}행</span>
+          <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+            <button style={{...S.secBtn,fontSize:11,padding:"5px 10px"}} onClick={() => { setQuestions(config?.questions||["","","","",""]); setAdminPw(config?.password||""); setApiInput(apiUrl); setTestStatus(""); setMode("admin"); }}>질문 수정</button>
+            <button style={{...S.secBtn,fontSize:11,padding:"5px 10px",color:"#dc2626",borderColor:"#fca5a5"}} onClick={handleClear}>초기화</button>
+          </div>
+        </div>
+        {statsLoading ? (
+          <div style={{textAlign:"center",padding:"48px 0"}}><div style={S.spinner}/><p style={{color:"#888",marginTop:12}}>데이터 불러오는 중...</p></div>
+        ) : !stats || !Object.keys(stats).length ? (
+          <div style={{textAlign:"center",color:"#aaa",padding:"48px 0"}}><div style={{fontSize:40,marginBottom:12}}>📭</div><p>제출된 평가가 없습니다.</p></div>
+        ) : (
+          <div style={{overflowX:"auto"}}>
+            <table style={S.table}>
+              <thead><tr>
+                <th style={S.th}>본부</th><th style={S.th}>조</th><th style={S.th}>이름</th>
+                {config.questions.map((q,i) => <th key={i} style={{...S.th,maxWidth:80,fontSize:11}} title={q}>Q{i+1}</th>)}
+                <th style={{...S.th,color:"#2563eb"}}>평균</th><th style={S.th}>평가수</th>
+              </tr></thead>
+              <tbody>
+                {Object.values(stats).sort((a,b) => {
+                  if (a.division!==b.division) return a.division.localeCompare(b.division);
+                  if (a.group!==b.group) return Number(a.group)-Number(b.group);
+                  return (b.count?b.total/b.count:0)-(a.count?a.total/a.count:0);
+                }).map(d => {
+                  const avg = d.count ? (d.total/d.count).toFixed(1) : "-";
+                  const avgN = d.count ? d.total/d.count : 0;
+                  const clr = avgN>=4?"#22c55e":avgN>=3?"#f59e0b":"#ef4444";
+                  return (
+                    <tr key={`${d.division}-${d.group}-${d.name}`}>
+                      <td style={S.td}>{d.division}</td><td style={S.td}>{d.group}조</td><td style={{...S.td,fontWeight:600}}>{d.name}</td>
+                      {config.questions.map((_,qi) => { const qd=d.byQ[qi]; return <td key={qi} style={S.td}>{qd?(qd.sum/qd.n).toFixed(1):"-"}</td>; })}
+                      <td style={S.td}><div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{width:40,height:6,background:"#e5e7eb",borderRadius:3,overflow:"hidden"}}><div style={{width:`${(avgN/5)*100}%`,height:"100%",background:clr,borderRadius:3}}/></div>
+                        <span style={{fontWeight:700,color:clr,fontSize:13}}>{avg}</span>
+                      </div></td>
+                      <td style={{...S.td,fontSize:12,color:"#888"}}>{d.evals.size}명</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{marginTop:16,padding:"12px 16px",background:"#f8fafc",borderRadius:10,border:"1px solid #e5e7eb"}}>
+              <p style={{fontSize:11,fontWeight:600,color:"#666",marginBottom:4}}>질문 목록</p>
+              {config.questions.map((q,i) => <p key={i} style={{fontSize:12,color:"#888",margin:"2px 0"}}>Q{i+1}. {q}</p>)}
+            </div>
+          </div>
+        )}
+      </div></div>
+    );
+  }
+
+  // ─── EVALUATE ───
+  if (mode === "evaluate") {
+    if (step === 1) {
+      return (
+        <div style={S.page}><div style={S.card}>
+          <StepBar c={1}/>
+          <h2 style={S.cardTitle}>평가자 정보 입력</h2>
+          <label style={S.label}>이름</label>
+          <input style={S.input} placeholder="본인 이름" value={evalName} onChange={e => setEvalName(e.target.value)}/>
+          <label style={S.label}>소속 본부</label>
+          <div style={S.chipRow}>{DIVISIONS.map(d => <button key={d} style={evalDiv===d?S.chipOn:S.chipOff} onClick={() => setEvalDiv(d)}>{d}</button>)}</div>
+          <label style={S.label}>조</label>
+          <div style={S.chipRow}>{GROUPS.map(g => <button key={g} style={evalGroup===String(g)?S.chipOn:S.chipOff} onClick={() => setEvalGroup(String(g))}>{g}조</button>)}</div>
+          <div style={S.row}>
+            <button style={S.secBtn} onClick={() => setMode("landing")}>취소</button>
+            <button style={S.priBtn} onClick={() => { if (!evalName.trim()||!evalDiv||!evalGroup) return alert("모든 항목을 입력해주세요."); setStep(2); }}>다음 →</button>
+          </div>
+        </div></div>
+      );
+    }
+    if (step === 2) {
+      return (
+        <div style={S.page}><div style={S.card}>
+          <StepBar c={2}/>
+          <h2 style={S.cardTitle}>평가 대상 팀원</h2>
+          <p style={S.cardSub}>본인 제외, 같은 조 팀원 (최대 {MAX_MEMBERS}명)</p>
+          {members.map((m,i) => (
+            <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+              <span style={S.qBadge}>{i+1}</span>
+              <input style={{...S.input,flex:1,margin:0}} placeholder={`팀원 ${i+1}`} value={m} onChange={e => { const nm=[...members]; nm[i]=e.target.value; setMembers(nm); }}/>
+              {members.length>1 && <button onClick={() => setMembers(members.filter((_,j) => j!==i))} style={S.xBtn}>✕</button>}
+            </div>
+          ))}
+          {members.length<MAX_MEMBERS && <button style={S.addBtn} onClick={() => setMembers([...members,""])}>+ 팀원 추가</button>}
+          <div style={S.row}>
+            <button style={S.secBtn} onClick={() => setStep(1)}>← 이전</button>
+            <button style={S.priBtn} onClick={() => {
+              const valid=members.filter(m => m.trim());
+              if (!valid.length) return alert("최소 1명을 입력해주세요.");
+              setMembers(valid);
+              const init={}; valid.forEach(m => config.questions.forEach((_,qi) => { init[`${m}-q${qi}`]=3; })); setScores(init); setStep(3);
+            }}>다음 →</button>
+          </div>
+        </div></div>
+      );
+    }
+    if (step === 3) {
+      const valid=members.filter(m => m.trim());
+      return (
+        <div style={S.page}><div style={{...S.card,maxWidth:580}}>
+          <StepBar c={3}/>
+          <h2 style={S.cardTitle}>팀원 평가</h2>
+          <p style={S.cardSub}>{evalName} · {evalDiv} · {evalGroup}조</p>
+          {valid.map(m => (
+            <div key={m} style={S.memberCard}>
+              <h3 style={S.memberName}>{m}</h3>
+              {config.questions.map((q,qi) => {
+                const key=`${m}-q${qi}`;
+                return (
+                  <div key={qi} style={{marginBottom:14}}>
+                    <p style={S.qLabel}>Q{qi+1}. {q}</p>
+                    <div style={{display:"flex",gap:2,alignItems:"center"}}>
+                      {[1,2,3,4,5].map(v => (
+                        <button key={v} onClick={() => setScores({...scores,[key]:v})} style={{
+                          width:36,height:36,border:"none",background:"transparent",
+                          fontSize:24,cursor:"pointer",color:scores[key]>=v?"#f59e0b":"#d4d4d8",
+                          transition:"transform .1s",transform:scores[key]>=v?"scale(1.15)":"scale(1)"
+                        }}>★</button>
+                      ))}
+                      <span style={{fontSize:13,color:"#888",marginLeft:8}}>{scores[key]}점</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          <div style={S.row}>
+            <button style={S.secBtn} onClick={() => setStep(2)}>← 이전</button>
+            <button style={S.priBtn} onClick={handleSubmit} disabled={saving}>{saving?"제출 중...":"제출하기 ✓"}</button>
+          </div>
+        </div></div>
+      );
+    }
+    if (step === 4) {
+      return (
+        <div style={S.page}><div style={{...S.card,textAlign:"center",padding:"48px 28px"}}>
+          <div style={{fontSize:56,marginBottom:12}}>🎉</div>
+          <h2 style={{...S.cardTitle,marginBottom:8}}>평가 완료!</h2>
+          <p style={{color:"#666",fontSize:14}}>Google Sheets에 저장되었습니다.</p>
+          <button style={{...S.priBtn,marginTop:24}} onClick={() => { setEvalName(""); setEvalDiv(""); setEvalGroup(""); setMembers([""]); setScores({}); setStep(1); setMode("landing"); }}>홈으로</button>
+        </div></div>
+      );
+    }
+  }
+  return null;
+}
+
+function StepBar({c}) {
+  return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:0,marginBottom:24}}>
+      {[1,2,3].map((s,i) => (
+        <div key={s} style={{display:"flex",alignItems:"center"}}>
+          <div style={{width:30,height:30,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,background:s<c?"#10b981":s===c?"#2563eb":"#e5e7eb",color:s<=c?"#fff":"#aaa"}}>{s<c?"✓":s}</div>
+          {i<2 && <div style={{width:36,height:2,background:s<c?"#10b981":"#e5e7eb"}}/>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const S = {
+  page:{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20},
+  center:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"100vh"},
+  spinner:{width:32,height:32,border:"3px solid #e5e7eb",borderTop:"3px solid #2563eb",borderRadius:"50%",animation:"spin .8s linear infinite"},
+  hero:{textAlign:"center",marginBottom:32},
+  logoCircle:{width:60,height:60,borderRadius:18,background:"linear-gradient(135deg,#2563eb,#7c3aed)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px"},
+  heroTitle:{fontSize:24,fontWeight:800,color:"#111",margin:0},
+  heroSub:{fontSize:11,color:"#999",letterSpacing:2,marginTop:4},
+  connOk:{display:"inline-block",marginTop:10,padding:"4px 14px",borderRadius:20,background:"#f0fdf4",color:"#16a34a",fontSize:12,fontWeight:600},
+  connNo:{display:"inline-block",marginTop:10,padding:"4px 14px",borderRadius:20,background:"#fef2f2",color:"#dc2626",fontSize:12,fontWeight:600},
+  cardRow:{display:"flex",flexDirection:"column",gap:10,width:"100%",maxWidth:360},
+  mainBtn:{display:"flex",alignItems:"center",gap:14,padding:"18px 20px",border:"1px solid #e2e8f0",borderRadius:14,background:"#fff",cursor:"pointer",textAlign:"left"},
+  btnLabel:{fontSize:15,fontWeight:700,color:"#111"},
+  btnDesc:{fontSize:11,color:"#999",marginTop:2},
+  notice:{padding:20,borderRadius:12,background:"#fef3c7",color:"#92400e",textAlign:"center",fontSize:13,lineHeight:1.6},
+  card:{width:"100%",maxWidth:440,background:"#fff",borderRadius:18,padding:"28px 24px",boxShadow:"0 2px 16px rgba(0,0,0,.06)",border:"1px solid #e5e7eb"},
+  cardTitle:{fontSize:19,fontWeight:800,color:"#111",margin:"0 0 4px"},
+  cardSub:{fontSize:13,color:"#888",marginBottom:18},
+  section:{marginTop:20,padding:16,background:"#fafafa",borderRadius:12,border:"1px solid #f1f5f9"},
+  secHead:{display:"flex",alignItems:"center",gap:8,marginBottom:10},
+  secLabel:{fontSize:14,fontWeight:700,color:"#333"},
+  label:{display:"block",fontSize:13,fontWeight:600,color:"#555",marginBottom:6,marginTop:18},
+  input:{width:"100%",padding:"10px 14px",borderRadius:10,border:"1px solid #d1d5db",fontSize:14,outline:"none",boxSizing:"border-box"},
+  select:{padding:"7px 12px",borderRadius:8,border:"1px solid #d1d5db",fontSize:13},
+  row:{display:"flex",gap:10,alignItems:"center",justifyContent:"flex-end",marginTop:20},
+  qRow:{display:"flex",gap:8,alignItems:"center",marginBottom:10},
+  qBadge:{fontSize:11,fontWeight:700,color:"#fff",background:"#2563eb",borderRadius:6,minWidth:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,padding:"0 4px"},
+  priBtn:{padding:"10px 22px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"},
+  secBtn:{padding:"9px 18px",borderRadius:10,border:"1px solid #d1d5db",background:"transparent",color:"#666",fontSize:13,cursor:"pointer"},
+  addBtn:{width:"100%",padding:10,borderRadius:10,border:"1px dashed #cbd5e1",background:"transparent",color:"#2563eb",fontSize:13,cursor:"pointer",marginTop:4},
+  xBtn:{width:28,height:28,borderRadius:8,border:"1px solid #e5e7eb",background:"transparent",color:"#aaa",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0},
+  chipRow:{display:"flex",gap:8,flexWrap:"wrap"},
+  chipOff:{padding:"8px 18px",borderRadius:10,border:"1px solid #d1d5db",background:"#fff",color:"#666",fontSize:14,cursor:"pointer",fontWeight:600},
+  chipOn:{padding:"8px 18px",borderRadius:10,border:"2px solid #2563eb",background:"#eff6ff",color:"#2563eb",fontSize:14,cursor:"pointer",fontWeight:700},
+  memberCard:{border:"1px solid #e5e7eb",borderRadius:14,padding:"16px 18px",marginBottom:14,background:"rgba(248,250,252,.5)"},
+  memberName:{fontSize:15,fontWeight:700,color:"#111",margin:"0 0 12px",paddingBottom:8,borderBottom:"1px solid #f1f5f9"},
+  qLabel:{fontSize:13,color:"#444",margin:"0 0 4px",lineHeight:1.4},
+  table:{width:"100%",borderCollapse:"collapse",fontSize:13},
+  th:{padding:10,borderBottom:"2px solid #e5e7eb",textAlign:"left",fontWeight:700,color:"#666",fontSize:12,whiteSpace:"nowrap"},
+  td:{padding:10,borderBottom:"1px solid #f1f5f9",color:"#333",fontSize:13},
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
