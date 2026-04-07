@@ -313,8 +313,8 @@ function App() {
             {CLASSES.map(c => <option key={c} value={String(c)}>{c}반</option>)}
           </select>
           <select style={S.select} value={filterGroup} onChange={e => setFilterGroup(e.target.value)}>
-            <option value="all">전체 조</option>
-            {GROUPS.map(g => <option key={g} value={String(g)}>{g}조</option>)}
+            <option value="all">전체 팀</option>
+            {GROUPS.map(g => <option key={g} value={String(g)}>{g}팀</option>)}
           </select>
           <button style={{...S.secBtn,fontSize:12,padding:"6px 12px"}} onClick={fetchResults}>{statsLoading?"⏳":"🔄"} 새로고침</button>
           <span style={{fontSize:12,color:"#888"}}>총 {getFiltered().length}행</span>
@@ -331,7 +331,7 @@ function App() {
           <div style={{overflowX:"auto"}}>
             <table style={S.table}>
               <thead><tr>
-                <th style={S.th}>진행과정</th><th style={S.th}>반</th><th style={S.th}>조</th><th style={S.th}>이름</th>
+                <th style={S.th}>진행과정</th><th style={S.th}>반</th><th style={S.th}>팀</th><th style={S.th}>이름</th>
                 {config.questions.map((q,i) => <th key={i} style={{...S.th,maxWidth:80,fontSize:11}} title={q}>Q{i+1}</th>)}
                 <th style={{...S.th,color:"#2563eb"}}>평균</th><th style={S.th}>평가수</th>
               </tr></thead>
@@ -347,7 +347,7 @@ function App() {
                   const clr=avgN>=5?"#22c55e":avgN>=4?"#f59e0b":"#ef4444";
                   return (
                     <tr key={`${d.course}-${d.classNum}-${d.group}-${d.name}`}>
-                      <td style={S.td}>{d.course}</td><td style={S.td}>{d.classNum}반</td><td style={S.td}>{d.group}조</td><td style={{...S.td,fontWeight:600}}>{d.name}</td>
+                      <td style={S.td}>{d.course}</td><td style={S.td}>{d.classNum}반</td><td style={S.td}>{d.group}팀</td><td style={{...S.td,fontWeight:600}}>{d.name}</td>
                       {config.questions.map((_,qi) => { const qd=d.byQ[qi]; return <td key={qi} style={S.td}>{qd?(qd.sum/qd.n).toFixed(1):"-"}</td>; })}
                       <td style={S.td}><span style={{fontWeight:700,color:clr,fontSize:13}}>{avg}</span></td>
                       <td style={{...S.td,fontSize:12,color:"#888"}}>{d.evals.size}명</td>
@@ -379,8 +379,8 @@ function App() {
           <div style={S.chipRow}>{COURSES.map(c => <button key={c} style={evalCourse===c?S.chipOn:S.chipOff} onClick={() => setEvalCourse(c)}>{c}</button>)}</div>
           <label style={S.label}>반</label>
           <div style={S.chipRow}>{CLASSES.map(c => <button key={c} style={evalClass===String(c)?S.chipOn:S.chipOff} onClick={() => setEvalClass(String(c))}>{c}반</button>)}</div>
-          <label style={S.label}>조</label>
-          <div style={S.chipRow}>{GROUPS.map(g => <button key={g} style={evalGroup===String(g)?S.chipOn:S.chipOff} onClick={() => setEvalGroup(String(g))}>{g}조</button>)}</div>
+          <label style={S.label}>팀</label>
+          <div style={S.chipRow}>{GROUPS.map(g => <button key={g} style={evalGroup===String(g)?S.chipOn:S.chipOff} onClick={() => setEvalGroup(String(g))}>{g}팀</button>)}</div>
           <div style={S.row}>
             <button style={S.secBtn} onClick={() => setMode("landing")}>취소</button>
             <button style={S.priBtn} onClick={() => { if(!evalName.trim()||!evalCourse||!evalClass||!evalGroup) return alert("모든 항목을 입력해주세요."); setStep(2); }}>다음 →</button>
@@ -394,7 +394,7 @@ function App() {
         <div style={S.page}><div style={S.card}>
           <StepBar c={2} total={4}/>
           <h2 style={S.cardTitle}>평가 대상 팀원</h2>
-          <p style={S.cardSub}>본인 제외, 같은 조 팀원 (최대 {MAX_MEMBERS}명)</p>
+          <p style={S.cardSub}>본인 제외, 같은 팀 팀원 (최대 {MAX_MEMBERS}명)</p>
           {members.map((m,i) => (
             <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
               <span style={S.qBadge}>{i+1}</span>
@@ -426,7 +426,7 @@ function App() {
         <div style={S.page}><div style={{...S.card, maxWidth:520}}>
           <StepBar c={3} total={4}/>
           <h2 style={S.cardTitle}>팀원 평가</h2>
-          <p style={S.cardSub}>{evalName} · {evalCourse} · {evalClass}반 · {evalGroup}조</p>
+          <p style={S.cardSub}>{evalName} · {evalCourse} · {evalClass}반 · {evalGroup}팀</p>
 
           <div style={{display:"flex",gap:6,marginBottom:16,justifyContent:"center"}}>
             {config.questions.map((_, i) => (
@@ -514,7 +514,7 @@ function App() {
         <div style={S.page}><div style={{...S.card, maxWidth:560}}>
           <StepBar c={4} total={4}/>
           <h2 style={S.cardTitle}>평가 확인</h2>
-          <p style={S.cardSub}>{evalName} · {evalCourse} · {evalClass}반 · {evalGroup}조</p>
+          <p style={S.cardSub}>{evalName} · {evalCourse} · {evalClass}반 · {evalGroup}팀</p>
 
           <div style={{overflowX:"auto"}}>
             <table style={{...S.table,fontSize:13}}>
