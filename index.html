@@ -32,9 +32,7 @@ async function gasCall(baseUrl, params) {
 }
 
 function getScorePool(memberCount) {
-  const pool = [];
-  for (let i = 3; i <= memberCount + 2; i++) pool.push(i);
-  return pool;
+  return [1, 2, 3, 4, 5, 6];
 }
 
 function App() {
