@@ -37,15 +37,35 @@ function getScorePool(memberCount) {
 
 function App() {
   const [mode, setMode] = useState("landing");
+  
+  // 1. API URL 기본값 설정
+  const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzIyLbrQdMh2rvdWEoeO4BaPgBU1ioaU0ongByJQyJ0bcrKX4EUkcipuYyOwFks6EqDjw/exec";
+  const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
+  const [apiInput, setApiInput] = useState(DEFAULT_API_URL);
+
+  // 2. 질문 및 비밀번호 기본값 설정
+  const DEFAULT_QUESTIONS = [
+    "팀의 목표 달성을 위해 적극적으로 기여하였는가?",
+    "자신의 역할을 책임감 있게 완수하였는가?",
+    "팀원들과 원활하게 소통하고 협력하였는가?",
+    "어려운 상황에서도 긍정적인 태도를 유지하였는가?",
+    "전문성을 바탕으로 팀에 실질적인 도움을 주었는가?"
+  ];
+  const DEFAULT_PW = "1234"; // 관리자 페이지 접속 비밀번호
+
+  const [questions, setQuestions] = useState(DEFAULT_QUESTIONS);
+  const [adminPw, setAdminPw] = useState(DEFAULT_PW);
+  
+  // 3. Config 객체 초기화 (이 부분이 있어야 메인 화면에서 '평가 시작' 버튼이 활성화됨)
+  const [config, setConfig] = useState({
+    questions: DEFAULT_QUESTIONS,
+    password: DEFAULT_PW
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState(null);
-  const [apiUrl, setApiUrl] = useState("");
-  const [apiInput, setApiInput] = useState("");
   const [testStatus, setTestStatus] = useState("");
 
-  const [questions, setQuestions] = useState(["", "", "", "", ""]);
-  const [adminPw, setAdminPw] = useState("");
   const [pwInput, setPwInput] = useState("");
 
   const [evalName, setEvalName] = useState("");
