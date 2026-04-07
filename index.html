@@ -217,11 +217,25 @@ function App() {
             <div style={S.notice}>⚠️ 평가가 설정되지 않았습니다.<br/><span style={{fontSize:12,opacity:.7}}>관리자 설정에서 Google Sheets를 연결해주세요.</span></div>
           )}
           <button style={{...S.mainBtn, background:"#f8fafc"}} onClick={() => {
-            if (config && apiUrl) { setPwInput(""); setMode("adminLogin"); }
-            else { setQuestions(config?.questions||["","","","",""]); setAdminPw(""); setApiInput(apiUrl); setTestStatus(""); setMode("admin"); }
+            // 1. 이미 API URL과 설정(비밀번호 포함)이 있다면 무조건 로그인 화면으로
+            if (apiUrl && config && config.password) {
+              setPwInput(""); 
+              setMode("adminLogin"); 
+            } 
+            // 2. 설정이 아예 없는 최초 실행 상태라면 바로 설정 화면으로 (이때 비번을 설정하게 됨)
+            else {
+              setQuestions(DEFAULT_QUESTIONS);
+              setAdminPw("");
+              setApiInput(apiUrl || "");
+              setTestStatus("");
+              setMode("admin");
+            }
           }}>
             <span style={{fontSize:24}}>⚙️</span>
-            <div><div style={S.btnLabel}>관리자 설정</div><div style={S.btnDesc}>Google Sheets 연결 · 질문 설정 · 통계</div></div>
+            <div>
+              <div style={S.btnLabel}>관리자 설정</div>
+              <div style={S.btnDesc}>Google Sheets 연결 · 질문 설정 · 통계</div>
+            </div>
           </button>
         </div>
       </div>
