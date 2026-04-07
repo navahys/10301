@@ -22,7 +22,18 @@ const COURSES = ["BX", "CX", "DX"];
 const CLASSES = [1, 2, 3];
 const GROUPS = [1, 2, 3, 4, 5, 6];
 const MAX_MEMBERS = 10;
+const MAX_QUESTIONS = 15;
 const LS_KEY = "peer-eval-api-url";
+
+const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzIyLbrQdMh2rvdWEoeO4BaPgBU1ioaU0ongByJQyJ0bcrKX4EUkcipuYyOwFks6EqDjw/exec";
+const DEFAULT_QUESTIONS = [
+  "팀의 목표 달성을 위해 적극적으로 기여하였는가?",
+  "자신의 역할을 책임감 있게 완수하였는가?",
+  "팀원들과 원활하게 소통하고 협력하였는가?",
+  "어려운 상황에서도 긍정적인 태도를 유지하였는가?",
+  "전문성을 바탕으로 팀에 실질적인 도움을 주었는가?"
+];
+const DEFAULT_PW = "1234";
 
 async function gasCall(baseUrl, params) {
   const url = new URL(baseUrl);
@@ -31,40 +42,20 @@ async function gasCall(baseUrl, params) {
   return res.json();
 }
 
-function getScorePool(memberCount) {
+function getScorePool() {
   return [1, 2, 3, 4, 5, 6];
 }
 
 function App() {
   const [mode, setMode] = useState("landing");
-  
-  // 1. API URL 기본값 설정
-  const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzIyLbrQdMh2rvdWEoeO4BaPgBU1ioaU0ongByJQyJ0bcrKX4EUkcipuYyOwFks6EqDjw/exec";
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
   const [apiInput, setApiInput] = useState(DEFAULT_API_URL);
-
-  // 2. 질문 및 비밀번호 기본값 설정
-  const DEFAULT_QUESTIONS = [
-    "팀의 목표 달성을 위해 적극적으로 기여하였는가?",
-    "자신의 역할을 책임감 있게 완수하였는가?",
-    "팀원들과 원활하게 소통하고 협력하였는가?",
-    "어려운 상황에서도 긍정적인 태도를 유지하였는가?",
-    "전문성을 바탕으로 팀에 실질적인 도움을 주었는가?"
-  ];
-  const DEFAULT_PW = "1234"; // 관리자 페이지 접속 비밀번호
-
-  const [questions, setQuestions] = useState(DEFAULT_QUESTIONS);
+  const [questions, setQuestions] = useState([...DEFAULT_QUESTIONS]);
   const [adminPw, setAdminPw] = useState(DEFAULT_PW);
-  
-  // 3. Config 객체 초기화 (이 부분이 있어야 메인 화면에서 '평가 시작' 버튼이 활성화됨)
-  const [config, setConfig] = useState({
-    questions: DEFAULT_QUESTIONS,
-    password: DEFAULT_PW
-  });
+  const [config, setConfig] = useState({ questions: DEFAULT_QUESTIONS, password: DEFAULT_PW });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testStatus, setTestStatus] = useState("");
-
   const [pwInput, setPwInput] = useState("");
 
   const [evalName, setEvalName] = useState("");
@@ -88,7 +79,10 @@ function App() {
       setApiUrl(saved);
       setApiInput(saved);
       gasCall(saved, { action: "getConfig" }).then(data => {
-        if (data && data.config) setConfig(data.config);
+        if (data && data.config) {
+          setConfig(data.config);
+          setQuestions(data.config.questions || [...DEFAULT_QUESTIONS]);
+        }
       }).catch(() => {});
     }
     setLoading(false);
@@ -100,7 +94,13 @@ function App() {
     try {
       const data = await gasCall(apiInput.trim(), { action: "getConfig" });
       if (data.error) setTestStatus("❌ 오류: " + data.error);
-      else { setTestStatus("✅ 연결 성공!"); if (data.config) { setConfig(data.config); setQuestions(data.config.questions || ["","","","",""]); } }
+      else {
+        setTestStatus("✅ 연결 성공!");
+        if (data.config) {
+          setConfig(data.config);
+          setQuestions(data.config.questions || [...DEFAULT_QUESTIONS]);
+        }
+      }
     } catch { setTestStatus("❌ 연결 실패"); }
   };
 
@@ -114,14 +114,16 @@ function App() {
 
   const handleAdminSave = async () => {
     if (!apiInput.trim()) return alert("Google Sheets API URL을 입력해주세요.");
-    if (questions.some(q => !q.trim())) return alert("모든 질문을 입력해주세요.");
+    const validQ = questions.filter(q => q.trim());
+    if (validQ.length < 1) return alert("최소 1개의 질문을 입력해주세요.");
+    if (questions.some(q => !q.trim())) return alert("빈 질문이 있습니다. 삭제하거나 내용을 입력해주세요.");
     if (!adminPw.trim()) return alert("관리자 비밀번호를 설정해주세요.");
     setSaving(true);
     try {
       localStorage.setItem(LS_KEY, apiInput.trim());
       setApiUrl(apiInput.trim());
       const data = await gasCall(apiInput.trim(), { action: "saveConfig", questions, password: adminPw.trim() });
-      if (data.success) { setConfig({ questions, password: adminPw.trim() }); alert("✅ 저장 완료!"); setMode("landing"); }
+      if (data.success) { setConfig({ questions: [...questions], password: adminPw.trim() }); alert("✅ 저장 완료! (질문 " + questions.length + "개)"); setMode("landing"); }
       else alert("저장 실패: " + (data.error || ""));
     } catch (err) { alert("연결 실패: " + err.message); }
     setSaving(false);
@@ -131,12 +133,9 @@ function App() {
     setSaving(true);
     try {
       const payload = {
-        evaluator: evalName,
-        course: evalCourse,
-        classNum: evalClass,
-        group: parseInt(evalGroup),
-        members: members.filter(m => m.trim()),
-        scores
+        evaluator: evalName, course: evalCourse, classNum: evalClass,
+        group: parseInt(evalGroup), members: members.filter(m => m.trim()),
+        scores, questionCount: config.questions.length
       };
       const data = await gasCall(apiUrl, { action: "submitEval", data: payload });
       if (data.success) setStep(5); else alert("제출 실패: " + (data.error || ""));
@@ -145,8 +144,21 @@ function App() {
   };
 
   const handleClear = async () => {
-    if (!confirm("모든 평가 결과를 삭제하시겠습니까?")) return;
+    if (!confirm("모든 평가 결과를 삭제하시겠습니까?\n(Results 시트가 삭제되고, 다음 제출 시 새로 생성됩니다)")) return;
     try { await gasCall(apiUrl, { action: "clearResults" }); setResults([]); alert("초기화 완료"); } catch (err) { alert("실패: " + err.message); }
+  };
+
+  // Question management
+  const addQuestion = () => {
+    if (questions.length >= MAX_QUESTIONS) return alert("최대 " + MAX_QUESTIONS + "개까지 추가할 수 있습니다.");
+    setQuestions([...questions, ""]);
+  };
+  const removeQuestion = (idx) => {
+    if (questions.length <= 1) return alert("최소 1개의 질문이 필요합니다.");
+    setQuestions(questions.filter((_, i) => i !== idx));
+  };
+  const updateQuestion = (idx, val) => {
+    const nq = [...questions]; nq[idx] = val; setQuestions(nq);
   };
 
   const getUsedScores = (qi) => {
@@ -205,6 +217,7 @@ function App() {
           <h1 style={S.heroTitle}>동료 평가 시스템</h1>
           <p style={S.heroSub}>PEER EVALUATION</p>
           {apiUrl ? <div style={S.connOk}>🟢 Google Sheets 연결됨</div> : <div style={S.connNo}>🔴 미연결</div>}
+          {config && <p style={{fontSize:11,color:"#888",marginTop:4}}>질문 {config.questions.length}개 설정됨</p>}
         </div>
         <div style={S.cardRow}>
           {config && apiUrl ? (
@@ -216,25 +229,11 @@ function App() {
             <div style={S.notice}>⚠️ 평가가 설정되지 않았습니다.<br/><span style={{fontSize:12,opacity:.7}}>관리자 설정에서 Google Sheets를 연결해주세요.</span></div>
           )}
           <button style={{...S.mainBtn, background:"#f8fafc"}} onClick={() => {
-            // 1. 이미 API URL과 설정(비밀번호 포함)이 있다면 무조건 로그인 화면으로
-            if (apiUrl && config && config.password) {
-              setPwInput(""); 
-              setMode("adminLogin"); 
-            } 
-            // 2. 설정이 아예 없는 최초 실행 상태라면 바로 설정 화면으로 (이때 비번을 설정하게 됨)
-            else {
-              setQuestions(DEFAULT_QUESTIONS);
-              setAdminPw("");
-              setApiInput(apiUrl || "");
-              setTestStatus("");
-              setMode("admin");
-            }
+            if (apiUrl && config && config.password) { setPwInput(""); setMode("adminLogin"); }
+            else { setQuestions(config?.questions ? [...config.questions] : [...DEFAULT_QUESTIONS]); setAdminPw(""); setApiInput(apiUrl || ""); setTestStatus(""); setMode("admin"); }
           }}>
             <span style={{fontSize:24}}>⚙️</span>
-            <div>
-              <div style={S.btnLabel}>관리자 설정</div>
-              <div style={S.btnDesc}>Google Sheets 연결 · 질문 설정 · 통계</div>
-            </div>
+            <div><div style={S.btnLabel}>관리자 설정</div><div style={S.btnDesc}>Google Sheets 연결 · 질문 설정 · 통계</div></div>
           </button>
         </div>
       </div>
@@ -261,7 +260,7 @@ function App() {
   // ─── ADMIN SETUP ───
   if (mode === "admin") {
     return (
-      <div style={S.page}><div style={{...S.card, maxWidth:480}}>
+      <div style={S.page}><div style={{...S.card, maxWidth:500}}>
         <h2 style={S.cardTitle}>관리자 설정</h2>
         <div style={S.section}>
           <div style={S.secHead}><span>📎</span><span style={S.secLabel}>Google Sheets 연결</span></div>
@@ -273,17 +272,28 @@ function App() {
           </div>
         </div>
         <div style={S.section}>
-          <div style={S.secHead}><span>📝</span><span style={S.secLabel}>평가 질문 (5개)</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={S.secHead}><span>📝</span><span style={S.secLabel}>평가 질문 ({questions.length}개)</span></div>
+          </div>
           {questions.map((q, i) => (
-            <div key={i} style={S.qRow}>
+            <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
               <span style={S.qBadge}>Q{i+1}</span>
-              <input style={{...S.input,flex:1,margin:0}} placeholder={`질문 ${i+1}`} value={q} onChange={e => { const nq=[...questions]; nq[i]=e.target.value; setQuestions(nq); }}/>
+              <input style={{...S.input,flex:1,margin:0}} placeholder={`질문 ${i+1}`} value={q} onChange={e => updateQuestion(i, e.target.value)}/>
+              {questions.length > 1 && (
+                <button onClick={() => removeQuestion(i)} style={S.xBtn} title="질문 삭제">✕</button>
+              )}
             </div>
           ))}
+          {questions.length < MAX_QUESTIONS && (
+            <button style={S.addBtn} onClick={addQuestion}>+ 질문 추가 (현재 {questions.length}개 / 최대 {MAX_QUESTIONS}개)</button>
+          )}
         </div>
         <div style={S.section}>
           <div style={S.secHead}><span>🔐</span><span style={S.secLabel}>관리자 비밀번호</span></div>
           <input style={S.input} type="password" placeholder="통계 조회 시 사용할 비밀번호" value={adminPw} onChange={e => setAdminPw(e.target.value)}/>
+        </div>
+        <div style={{background:"#fef3c7",borderRadius:10,padding:"10px 14px",marginTop:16,border:"1px solid #fde68a"}}>
+          <p style={{fontSize:12,color:"#92400e"}}>⚠️ 질문 수를 변경하면 기존 Results 시트와 열 구조가 달라질 수 있습니다. 변경 전 기존 결과를 백업하거나 초기화해주세요.</p>
         </div>
         <div style={S.row}>
           <button style={S.secBtn} onClick={() => setMode("landing")}>취소</button>
@@ -296,13 +306,14 @@ function App() {
   // ─── ADMIN STATS ───
   if (mode === "adminStats") {
     const stats = getStats();
+    const qCount = config ? config.questions.length : 0;
     return (
-      <div style={S.page}><div style={{...S.card, maxWidth:800, width:"100%"}}>
+      <div style={S.page}><div style={{...S.card, maxWidth:Math.max(800, 400 + qCount * 60), width:"100%"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
           <h2 style={{...S.cardTitle,margin:0}}>📊 평가 결과</h2>
           <button style={{...S.secBtn,fontSize:12}} onClick={() => setMode("landing")}>홈으로</button>
         </div>
-        <p style={{fontSize:12,color:"#10b981",margin:"4px 0 12px"}}>📋 Google Sheets 실시간 조회</p>
+        <p style={{fontSize:12,color:"#10b981",margin:"4px 0 12px"}}>📋 Google Sheets 실시간 조회 (질문 {qCount}개)</p>
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
           <select style={S.select} value={filterCourse} onChange={e => setFilterCourse(e.target.value)}>
             <option value="all">전체 과정</option>
@@ -319,7 +330,7 @@ function App() {
           <button style={{...S.secBtn,fontSize:12,padding:"6px 12px"}} onClick={fetchResults}>{statsLoading?"⏳":"🔄"} 새로고침</button>
           <span style={{fontSize:12,color:"#888"}}>총 {getFiltered().length}행</span>
           <div style={{marginLeft:"auto",display:"flex",gap:6}}>
-            <button style={{...S.secBtn,fontSize:11,padding:"5px 10px"}} onClick={() => { setQuestions(config?.questions||["","","","",""]); setAdminPw(config?.password||""); setApiInput(apiUrl); setTestStatus(""); setMode("admin"); }}>질문 수정</button>
+            <button style={{...S.secBtn,fontSize:11,padding:"5px 10px"}} onClick={() => { setQuestions(config?.questions ? [...config.questions] : [...DEFAULT_QUESTIONS]); setAdminPw(config?.password||""); setApiInput(apiUrl); setTestStatus(""); setMode("admin"); }}>질문 수정</button>
             <button style={{...S.secBtn,fontSize:11,padding:"5px 10px",color:"#dc2626",borderColor:"#fca5a5"}} onClick={handleClear}>초기화</button>
           </div>
         </div>
@@ -357,7 +368,7 @@ function App() {
               </tbody>
             </table>
             <div style={{marginTop:16,padding:"12px 16px",background:"#f8fafc",borderRadius:10,border:"1px solid #e5e7eb"}}>
-              <p style={{fontSize:11,fontWeight:600,color:"#666",marginBottom:4}}>질문 목록</p>
+              <p style={{fontSize:11,fontWeight:600,color:"#666",marginBottom:4}}>질문 목록 ({config.questions.length}개)</p>
               {config.questions.map((q,i) => <p key={i} style={{fontSize:12,color:"#888",margin:"2px 0"}}>Q{i+1}. {q}</p>)}
             </div>
           </div>
@@ -368,6 +379,8 @@ function App() {
 
   // ─── EVALUATE ───
   if (mode === "evaluate") {
+    const qCount = config.questions.length;
+
     if (step === 1) {
       return (
         <div style={S.page}><div style={S.card}>
@@ -417,7 +430,7 @@ function App() {
 
     if (step === 3) {
       const validMembers = members.filter(m => m.trim());
-      const pool = getScorePool(validMembers.length);
+      const pool = getScorePool();
       const qi = currentQ;
       const question = config.questions[qi];
       const usedScores = getUsedScores(qi);
@@ -428,26 +441,26 @@ function App() {
           <h2 style={S.cardTitle}>팀원 평가</h2>
           <p style={S.cardSub}>{evalName} · {evalCourse} · {evalClass}반 · {evalGroup}팀</p>
 
-          <div style={{display:"flex",gap:6,marginBottom:16,justifyContent:"center"}}>
+          <div style={{display:"flex",gap:5,marginBottom:16,justifyContent:"center",flexWrap:"wrap"}}>
             {config.questions.map((_, i) => (
               <button key={i} onClick={() => setCurrentQ(i)} style={{
-                width:36, height:36, borderRadius:"50%", border: i===qi ? "2px solid #2563eb" : "1px solid #d1d5db",
+                width:34, height:34, borderRadius:"50%", border: i===qi ? "2px solid #2563eb" : "1px solid #d1d5db",
                 background: isQScored(i) ? "#10b981" : i===qi ? "#eff6ff" : "#fff",
                 color: isQScored(i) ? "#fff" : i===qi ? "#2563eb" : "#888",
-                fontWeight:700, fontSize:13, cursor:"pointer"
-              }}>Q{i+1}</button>
+                fontWeight:700, fontSize:11, cursor:"pointer"
+              }}>{i+1}</button>
             ))}
           </div>
 
           <div style={{background:"#f0f4ff",borderRadius:12,padding:"14px 18px",marginBottom:20,border:"1px solid #dbeafe"}}>
-            <p style={{fontSize:11,color:"#2563eb",fontWeight:700,marginBottom:4}}>Q{qi+1}</p>
+            <p style={{fontSize:11,color:"#2563eb",fontWeight:700,marginBottom:4}}>Q{qi+1} / {qCount}</p>
             <p style={{fontSize:14,color:"#1e293b",fontWeight:600,lineHeight:1.5}}>{question}</p>
           </div>
 
           <div style={{background:"#fffbeb",borderRadius:10,padding:"10px 14px",marginBottom:16,border:"1px solid #fde68a"}}>
             <p style={{fontSize:12,color:"#92400e"}}>
               ⚠️ 각 점수는 <strong>한 명에게만</strong> 부여할 수 있습니다.
-              <br/>사용 가능 점수: <strong>{pool.join(", ")}</strong>점 (팀원 {validMembers.length}명)
+              <br/>사용 가능 점수: <strong>{pool.join(", ")}</strong>점
             </p>
           </div>
 
@@ -492,7 +505,7 @@ function App() {
             ) : (
               <button style={S.secBtn} onClick={() => setStep(2)}>← 팀원 수정</button>
             )}
-            {qi < config.questions.length - 1 ? (
+            {qi < qCount - 1 ? (
               <button style={S.priBtn} onClick={() => {
                 if (!isQScored(qi)) return alert("모든 팀원에게 점수를 부여해주세요.");
                 setCurrentQ(qi+1);
@@ -511,11 +524,10 @@ function App() {
     if (step === 4) {
       const validMembers = members.filter(m => m.trim());
       return (
-        <div style={S.page}><div style={{...S.card, maxWidth:560}}>
+        <div style={S.page}><div style={{...S.card, maxWidth:Math.max(500, 200 + qCount * 50)}}>
           <StepBar c={4} total={4}/>
           <h2 style={S.cardTitle}>평가 확인</h2>
           <p style={S.cardSub}>{evalName} · {evalCourse} · {evalClass}반 · {evalGroup}팀</p>
-
           <div style={{overflowX:"auto"}}>
             <table style={{...S.table,fontSize:13}}>
               <thead><tr>
@@ -541,7 +553,6 @@ function App() {
               </tbody>
             </table>
           </div>
-
           <div style={{...S.row,marginTop:24}}>
             <button style={S.secBtn} onClick={() => { setCurrentQ(0); setStep(3); }}>← 수정하기</button>
             <button style={S.priBtn} onClick={handleSubmit} disabled={saving}>{saving?"제출 중...":"제출하기 ✓"}</button>
@@ -597,7 +608,7 @@ const S = {
   cardTitle:{fontSize:19,fontWeight:800,color:"#111",margin:"0 0 4px"},
   cardSub:{fontSize:13,color:"#888",marginBottom:18},
   section:{marginTop:20,padding:16,background:"#fafafa",borderRadius:12,border:"1px solid #f1f5f9"},
-  secHead:{display:"flex",alignItems:"center",gap:8,marginBottom:10},
+  secHead:{display:"flex",alignItems:"center",gap:8,marginBottom:0},
   secLabel:{fontSize:14,fontWeight:700,color:"#333"},
   label:{display:"block",fontSize:13,fontWeight:600,color:"#555",marginBottom:6,marginTop:18},
   input:{width:"100%",padding:"10px 14px",borderRadius:10,border:"1px solid #d1d5db",fontSize:14,outline:"none",boxSizing:"border-box"},
